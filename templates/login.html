@@ -17,16 +17,16 @@
                 <form method="POST" action="">
                     {{ form.hidden_tag() }}
                     <div class="mb-4">
-                        {{ form.email.label(class="form-label") }}
-                        {% if form.email.errors %}
-                            {{ form.email(class="form-control is-invalid", placeholder="Enter your email") }}
+                        {{ form.username_or_email.label(class="form-label") }}
+                        {% if form.username_or_email.errors %}
+                            {{ form.username_or_email(class="form-control is-invalid", placeholder="Enter your username or email") }}
                             <div class="invalid-feedback">
-                                {% for error in form.email.errors %}
+                                {% for error in form.username_or_email.errors %}
                                     <span>{{ error }}</span>
                                 {% endfor %}
                             </div>
                         {% else %}
-                            {{ form.email(class="form-control", placeholder="Enter your email") }}
+                            {{ form.username_or_email(class="form-control", placeholder="Enter your username or email") }}
                         {% endif %}
                     </div>
                     <div class="mb-4">

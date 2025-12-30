@@ -4,12 +4,15 @@ from wtforms import StringField, PasswordField, SubmitField, SelectField
 from wtforms.validators import DataRequired, Email, EqualTo
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
+from pymongo import MongoClient
+from bson.objectid import ObjectId
+import certifi
 import json
 import os
 import ast
 import joblib
 import numpy as np
-from supabase import create_client, Client
+import pandas as pd
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -18,10 +21,17 @@ load_dotenv()
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'your-secret-key')
 
-# Initialize Supabase client
-url = os.environ.get("SUPABASE_URL", "your-supabase-url")
-key = os.environ.get("SUPABASE_KEY", "your-supabase-key")
-supabase: Client = create_client(url, key)
+# Initialize MongoDB client
+mongo_uri = os.environ.get("mongo_uri", "mongodb://localhost:27017/pokedex")
+client = MongoClient(mongo_uri, tls=True, tlsCAFile=certifi.where())
+db = client["pokedex_db"]
+users_collection = db["users"]
+
+# Create index on email for faster lookups
+users_collection.create_index("email", unique=True)
+
+# Create index on username for faster lookups and uniqueness
+users_collection.create_index("username", unique=True)
 
 # Setup login manager
 login_manager = LoginManager(app)
@@ -38,37 +48,39 @@ TYPE_MAPPING = {
 # User model
 class User(UserMixin):
     def __init__(self, id, username, email, password):
-        self.id = id
+        self.id = str(id)
         self.username = username
         self.email = email
         self.password = password
         
     @staticmethod
     def get_by_id(user_id):
-        response = supabase.table('users').select('*').eq('id', user_id).execute()
-        data = response.data
-        if data:
-            user_data = data[0]
-            return User(
-                id=user_data['id'],
-                username=user_data['username'],
-                email=user_data['email'],
-                password=user_data['password']
-            )
+        try:
+            user_data = users_collection.find_one({"_id": ObjectId(user_id)})
+            if user_data:
+                return User(
+                    id=user_data['_id'],
+                    username=user_data['username'],
+                    email=user_data['email'],
+                    password=user_data['password']
+                )
+        except Exception as e:
+            print(f"Error getting user by id: {e}")
         return None
     
     @staticmethod
     def get_by_email(email):
-        response = supabase.table('users').select('*').eq('email', email).execute()
-        data = response.data
-        if data:
-            user_data = data[0]
-            return User(
-                id=user_data['id'],
-                username=user_data['username'],
-                email=user_data['email'],
-                password=user_data['password']
-            )
+        try:
+            user_data = users_collection.find_one({"email": email})
+            if user_data:
+                return User(
+                    id=user_data['_id'],
+                    username=user_data['username'],
+                    email=user_data['email'],
+                    password=user_data['password']
+                )
+        except Exception as e:
+            print(f"Error getting user by email: {e}")
         return None
 
 @login_manager.user_loader
@@ -84,7 +96,7 @@ class RegistrationForm(FlaskForm):
     submit = SubmitField('Sign Up')
 
 class LoginForm(FlaskForm):
-    email = StringField('Email', validators=[DataRequired(), Email()])
+    username_or_email = StringField('Username or Email', validators=[DataRequired()])
     password = PasswordField('Password', validators=[DataRequired()])
     submit = SubmitField('Login')
 
@@ -207,6 +219,19 @@ def predict_battle(model, pokemon1_features, pokemon2_features):
 pokemon_data = load_pokemon_data()
 battle_model = load_battle_model()
 
+# Initialize Dash dashboard
+from dashboard import create_dashboard, load_pokemon_dataframe
+
+pokemon_df = load_pokemon_dataframe()
+dashboard_app = create_dashboard(app, pokemon_df)
+
+# Protect dashboard with login_required
+@app.before_request
+def check_dashboard_auth():
+    if request.path.startswith('/dashboard/'):
+        if not current_user.is_authenticated:
+            return redirect(url_for('login', next=request.url))
+
 # Authentication routes
 @app.route('/')
 def home():
@@ -225,10 +250,16 @@ def register():
     if form.validate_on_submit():
         hashed_password = generate_password_hash(form.password.data)
         
-        # Check if user already exists
-        existing_user = supabase.table('users').select('*').eq('email', form.email.data).execute()
-        if existing_user.data:
+        # Check if email already exists
+        existing_email = users_collection.find_one({"email": form.email.data})
+        if existing_email:
             flash('Email already registered. Please use a different email.', 'danger')
+            return render_template('register.html', title='Register', form=form)
+        
+        # Check if username already exists
+        existing_username = users_collection.find_one({"username": form.username.data})
+        if existing_username:
+            flash('Username already taken. Please choose a different username.', 'danger')
             return render_template('register.html', title='Register', form=form)
         
         # Create new user
@@ -238,13 +269,15 @@ def register():
             'password': hashed_password
         }
         
-        result = supabase.table('users').insert(new_user).execute()
-        
-        if result.data:
-            flash('Your account has been created! You are now able to log in', 'success')
-            return redirect(url_for('login'))
-        else:
-            flash('Registration failed. Please try again.', 'danger')
+        try:
+            result = users_collection.insert_one(new_user)
+            if result.inserted_id:
+                flash('Your account has been created! You are now able to log in', 'success')
+                return redirect(url_for('login'))
+            else:
+                flash('Registration failed. Please try again.', 'danger')
+        except Exception as e:
+            flash(f'Registration failed: {str(e)}', 'danger')
     
     return render_template('register.html', title='Register', form=form)
 
@@ -255,20 +288,25 @@ def login():
     
     form = LoginForm()
     if form.validate_on_submit():
-        user_data = supabase.table('users').select('*').eq('email', form.email.data).execute()
+        username_or_email = form.username_or_email.data
         
-        if user_data.data and check_password_hash(user_data.data[0]['password'], form.password.data):
+        # Try to find by email first, then by username
+        user_data = users_collection.find_one({"email": username_or_email})
+        if not user_data:
+            user_data = users_collection.find_one({"username": username_or_email})
+        
+        if user_data and check_password_hash(user_data['password'], form.password.data):
             user = User(
-                id=user_data.data[0]['id'],
-                username=user_data.data[0]['username'],
-                email=user_data.data[0]['email'],
-                password=user_data.data[0]['password']
+                id=user_data['_id'],
+                username=user_data['username'],
+                email=user_data['email'],
+                password=user_data['password']
             )
             login_user(user)
             next_page = request.args.get('next')
             return redirect(next_page if next_page else url_for('pokedex'))
         else:
-            flash('Login Unsuccessful. Please check email and password', 'danger')
+            flash('Login Unsuccessful. Please check username/email and password', 'danger')
     
     return render_template('login.html', title='Login', form=form)
 
@@ -404,11 +442,13 @@ def api_battle():
     winner_name = pokemon1["name"] if result["winner"] == "Pokemon 1" else pokemon2["name"]
     battle_result = {
         "winner": winner_name,
-        "probability": round(result["probability"], 2)
+        "probability": float(round(result["probability"], 2))
     }
     
     return jsonify(battle_result)
 
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=5000)
+    # For HF Spaces: use port 7860, for local: use port 5000
+    port = int(os.environ.get('PORT', 7860))
+    app.run(host='0.0.0.0', port=port, debug=False)
  
