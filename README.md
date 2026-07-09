@@ -57,6 +57,22 @@ A comprehensive Pokémon web application with user authentication, interactive d
 
 ---
 
+## 📸 Project Screenshots
+
+### Dashboard Analytics
+![PokéDex Dashboard](https://github.com/lmno3418/Pokemon-Analysis-Prediction/blob/main/static/imgs/ss01.png?raw=true)
+*Interactive dashboard with 11 advanced visualizations and real-time filtering*
+
+### Pokémon Browser
+![Pokémon Browser](https://github.com/lmno3418/Pokemon-Analysis-Prediction/blob/main/static/imgs/ss02.png?raw=true)
+*Browse and search 697 Pokémon with detailed stats and information*
+
+### Battle System & Prediction
+![Battle Prediction](https://github.com/lmno3418/Pokemon-Analysis-Prediction/blob/main/static/imgs/ss03.png?raw=true)
+*AI-powered battle prediction with win probability estimation*
+
+---
+
 ## 🛠️ Tech Stack
 
 - **Backend**: Flask 3.1.1 + Gunicorn
@@ -321,7 +337,7 @@ Contributions welcome! Feel free to:
 
 ---
 
-## �� Testing
+## 🧪 Testing
 
 ### Local Testing
 ```bash
